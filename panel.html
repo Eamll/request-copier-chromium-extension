@@ -194,6 +194,89 @@
       padding: 6px 10px;
       border-radius: 4px;
     }
+    
+    .graphql-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: #3c3c3c;
+      border: 1px solid #555;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+    }
+    
+    .graphql-toggle:hover {
+      background: #4c4c4c;
+    }
+    
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 32px;
+      height: 18px;
+    }
+    
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #555;
+      transition: 0.3s;
+      border-radius: 18px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: #007acc;
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(14px);
+    }
+    
+    input:focus + .slider {
+      box-shadow: 0 0 1px #007acc;
+    }
+    
+    .switch-label {
+      cursor: pointer;
+      margin: 0;
+      font-size: 12px;
+      color: #d4d4d4;
+    }
+    
+    .graphql-badge {
+      display: inline-block;
+      background: #e10098;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: bold;
+      margin-left: 4px;
+    }
   </style>
 </head>
 <body>
@@ -204,6 +287,13 @@
   
   <div class="filter-row">
     <input type="text" id="filter" placeholder="Filter requests (regex supported)...">
+    <div class="graphql-toggle" onclick="document.getElementById('graphqlToggle').click()">
+      <label class="switch">
+        <input type="checkbox" id="graphqlToggle">
+        <span class="slider"></span>
+      </label>
+      <label for="graphqlToggle" class="switch-label">GraphQL Only</label>
+    </div>
     <div class="format-options">
       <label>
         Format:
@@ -211,6 +301,7 @@
           <option value="json">JSON</option>
           <option value="curl">cURL + Response</option>
           <option value="markdown">Markdown</option>
+          <option value="graphql">GraphQL</option>
         </select>
       </label>
     </div>
