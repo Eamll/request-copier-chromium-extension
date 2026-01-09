@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 12px;
+      margin: 0;
+      padding: 12px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    
+    .hotkey-hint {
+      background: #333;
+      padding: 4px 8px;
+      border-radius: 4px;
+      color: #9cdcfe;
+    }
+    
+    kbd {
+      background: #444;
+      padding: 2px 6px;
+      border-radius: 3px;
+      border: 1px solid #555;
+      font-family: monospace;
+    }
+    
+    .status {
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: #2d2d2d;
+    }
+    
+    .status.success {
+      background: #1e3a1e;
+      color: #4ec94e;
+    }
+    
+    .status.error {
+      background: #3a1e1e;
+      color: #f48771;
+    }
+    
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+    
+    input[type="text"] {
+      background: #3c3c3c;
+      border: 1px solid #555;
+      color: #d4d4d4;
+      padding: 6px 10px;
+      border-radius: 4px;
+      flex: 1;
+      max-width: 300px;
+    }
+    
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #007acc;
+    }
+    
+    .requests-container {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #333;
+      border-radius: 4px;
+      background: #252526;
+    }
+    
+    .request-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid #333;
+      cursor: pointer;
+      gap: 10px;
+    }
+    
+    .request-item:hover {
+      background: #2a2d2e;
+    }
+    
+    .request-item.selected {
+      background: #094771;
+    }
+    
+    .method {
+      font-weight: bold;
+      min-width: 50px;
+      font-size: 11px;
+    }
+    
+    .method.get { color: #4ec94e; }
+    .method.post { color: #dcdcaa; }
+    .method.put { color: #569cd6; }
+    .method.patch { color: #c586c0; }
+    .method.delete { color: #f48771; }
+    
+    .url {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #9cdcfe;
+    }
+    
+    .status-code {
+      min-width: 35px;
+      text-align: right;
+      font-size: 11px;
+    }
+    
+    .status-code.success { color: #4ec94e; }
+    .status-code.redirect { color: #dcdcaa; }
+    .status-code.error { color: #f48771; }
+    
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    
+    button {
+      background: #0e639c;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    button:hover {
+      background: #1177bb;
+    }
+    
+    button:disabled {
+      background: #444;
+      cursor: not-allowed;
+    }
+    
+    button.secondary {
+      background: #3c3c3c;
+    }
+    
+    button.secondary:hover {
+      background: #4c4c4c;
+    }
+    
+    .empty-state {
+      padding: 40px;
+      text-align: center;
+      color: #888;
+    }
+    
+    .format-options {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    
+    select {
+      background: #3c3c3c;
+      border: 1px solid #555;
+      color: #d4d4d4;
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="hotkey-hint">Hotkey: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> to copy selected</span>
+    <span id="status" class="status"></span>
+  </div>
+  
+  <div class="filter-row">
+    <input type="text" id="filter" placeholder="Filter requests (regex supported)...">
+    <div class="format-options">
+      <label>
+        Format:
+        <select id="format">
+          <option value="json">JSON</option>
+          <option value="curl">cURL + Response</option>
+          <option value="markdown">Markdown</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  
+  <div class="requests-container" id="requests">
+    <div class="empty-state">
+      Requests will appear here. Reload the page to capture traffic.
+    </div>
+  </div>
+  
+  <div class="actions">
+    <button id="copyBtn" disabled>Copy Selected</button>
+    <button id="clearBtn" class="secondary">Clear List</button>
+  </div>
+  
+  <script src="panel.js"></script>
+</body>
+</html>
