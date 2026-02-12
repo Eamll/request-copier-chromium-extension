@@ -1,6 +1,7 @@
 // Store all captured requests
 const requests = [];
-let selectedIndex = -1;
+const selectedIndices = new Set();
+let lastClickedIndex = -1;
 
 // DOM elements
 const requestsContainer = document.getElementById('requests');
@@ -118,7 +119,7 @@ function renderRequests() {
 
   requestsContainer.innerHTML = filtered.map((req, i) => {
     const statusClass = req.status < 300 ? 'success' : req.status < 400 ? 'redirect' : 'error';
-    const isSelected = requests.indexOf(req) === selectedIndex;
+    const isSelected = selectedIndices.has(requests.indexOf(req));
     
     // Get GraphQL info if available
     let displayText = new URL(req.url).pathname + new URL(req.url).search;
@@ -143,15 +144,43 @@ function renderRequests() {
 
   // Add click handlers
   requestsContainer.querySelectorAll('.request-item').forEach(el => {
-    el.addEventListener('click', () => {
-      selectedIndex = parseInt(el.dataset.index);
+    el.addEventListener('click', (e) => {
+      const idx = parseInt(el.dataset.index);
+
+      if (e.shiftKey && lastClickedIndex >= 0) {
+        // Shift+click: select range from last clicked to current
+        const from = Math.min(lastClickedIndex, idx);
+        const to = Math.max(lastClickedIndex, idx);
+        if (!e.ctrlKey && !e.metaKey) {
+          selectedIndices.clear();
+        }
+        for (let i = from; i <= to; i++) {
+          selectedIndices.add(i);
+        }
+      } else if (e.ctrlKey || e.metaKey) {
+        // Ctrl+click: toggle individual item
+        if (selectedIndices.has(idx)) {
+          selectedIndices.delete(idx);
+        } else {
+          selectedIndices.add(idx);
+        }
+      } else {
+        // Plain click: select single item
+        selectedIndices.clear();
+        selectedIndices.add(idx);
+      }
+
+      lastClickedIndex = idx;
       renderRequests();
-      copyBtn.disabled = false;
+      updateCopyButton();
       updatePreview();
     });
 
     el.addEventListener('dblclick', () => {
-      selectedIndex = parseInt(el.dataset.index);
+      const idx = parseInt(el.dataset.index);
+      selectedIndices.clear();
+      selectedIndices.add(idx);
+      lastClickedIndex = idx;
       copySelected();
     });
   });
@@ -443,33 +472,47 @@ function parsePayload(postData) {
   return null;
 }
 
+function formatRequest(req, format) {
+  switch (format) {
+    case 'curl': return formatAsCurl(req);
+    case 'markdown': return formatAsMarkdown(req);
+    case 'graphql': return formatAsGraphQL(req);
+    default: return formatAsJson(req);
+  }
+}
+
 async function copySelected() {
-  if (selectedIndex < 0 || !requests[selectedIndex]) {
+  if (selectedIndices.size === 0) {
     showStatus('No request selected', 'error');
     return;
   }
 
-  const req = requests[selectedIndex];
   const format = formatSelect.value;
-  
+  const sorted = [...selectedIndices].sort((a, b) => a - b);
+  const selected = sorted.map(i => requests[i]).filter(Boolean);
+
   let text;
-  switch (format) {
-    case 'curl':
-      text = formatAsCurl(req);
-      break;
-    case 'markdown':
-      text = formatAsMarkdown(req);
-      break;
-    case 'graphql':
-      text = formatAsGraphQL(req);
-      break;
-    default:
-      text = formatAsJson(req);
+  if (selected.length === 1) {
+    text = formatRequest(selected[0], format);
+  } else if (format === 'json') {
+    // Wrap multiple JSON requests in an array
+    const items = selected.map(req => {
+      const payload = req.postData ? parsePayload(req.postData) : null;
+      let responseBody = req.responseBody;
+      try { responseBody = JSON.parse(req.responseBody); } catch (e) {}
+      return { endpoint: req.url, method: req.method, status: req.status, payload, response: responseBody };
+    });
+    text = JSON.stringify(items, null, 2);
+  } else {
+    // Concatenate with separators
+    const separator = format === 'markdown' ? '\n\n---\n\n' : '\n\n';
+    text = selected.map(req => formatRequest(req, format)).join(separator);
   }
 
+  const count = selected.length;
   try {
     await navigator.clipboard.writeText(text);
-    showStatus(`Copied! (${format})`, 'success');
+    showStatus(`Copied ${count} request${count > 1 ? 's' : ''}! (${format})`, 'success');
   } catch (err) {
     // Fallback for clipboard API issues in DevTools
     const textarea = document.createElement('textarea');
@@ -478,7 +521,7 @@ async function copySelected() {
     textarea.select();
     document.execCommand('copy');
     document.body.removeChild(textarea);
-    showStatus(`Copied! (${format})`, 'success');
+    showStatus(`Copied ${count} request${count > 1 ? 's' : ''}! (${format})`, 'success');
   }
 }
 
@@ -494,13 +537,13 @@ function showStatus(message, type = '') {
 
 // Preview panel logic
 function updatePreview() {
-  if (selectedIndex < 0 || !requests[selectedIndex]) {
+  if (selectedIndices.size === 0 || lastClickedIndex < 0 || !requests[lastClickedIndex]) {
     previewPanel.classList.remove('visible');
     mainSplit.classList.remove('has-preview');
     return;
   }
 
-  const req = requests[selectedIndex];
+  const req = requests[lastClickedIndex];
   previewPanel.classList.add('visible');
   mainSplit.classList.add('has-preview');
 
@@ -513,7 +556,11 @@ function updatePreview() {
   // Summary line
   const statusClass = req.status < 300 ? 'success' : req.status < 400 ? 'redirect' : 'error';
   const methodClass = req.method.toLowerCase();
+  const multiBadge = selectedIndices.size > 1
+    ? `<span class="tab-badge" style="margin-right:4px">${selectedIndices.size} selected</span>`
+    : '';
   previewSummary.innerHTML = `
+    ${multiBadge}
     <span class="method ${methodClass}">${req.method}</span>
     <span class="url" title="${escapeHtml(req.url)}">${escapeHtml(req.url)}</span>
     <span class="arrow">&rarr;</span>
@@ -715,14 +762,25 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function updateCopyButton() {
+  const count = selectedIndices.size;
+  copyBtn.disabled = count === 0;
+  copyBtn.textContent = count > 1 ? `Copy ${count} Selected` : 'Copy Selected';
+}
+
+function scrollSelectedIntoView() {
+  const el = requestsContainer.querySelector(`.request-item[data-index="${lastClickedIndex}"]`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
 // Tab click handling
 previewTabs.addEventListener('click', (e) => {
   const tab = e.target.closest('.preview-tab');
   if (!tab) return;
   activePreviewTab = tab.dataset.tab;
   previewTabs.querySelectorAll('.preview-tab').forEach(t => t.classList.toggle('active', t === tab));
-  if (selectedIndex >= 0 && requests[selectedIndex]) {
-    renderPreviewBody(requests[selectedIndex]);
+  if (lastClickedIndex >= 0 && requests[lastClickedIndex]) {
+    renderPreviewBody(requests[lastClickedIndex]);
   }
 });
 
@@ -743,8 +801,9 @@ copyBtn.addEventListener('click', copySelected);
 
 clearBtn.addEventListener('click', () => {
   requests.length = 0;
-  selectedIndex = -1;
-  copyBtn.disabled = true;
+  selectedIndices.clear();
+  lastClickedIndex = -1;
+  updateCopyButton();
   renderRequests();
   updatePreview();
   showStatus('Cleared', 'success');
@@ -759,24 +818,34 @@ document.addEventListener('keydown', (e) => {
   }
   
   // Arrow keys to navigate
-  if (e.key === 'ArrowDown' && selectedIndex < requests.length - 1) {
+  if (e.key === 'ArrowDown' && lastClickedIndex < requests.length - 1) {
     e.preventDefault();
-    selectedIndex++;
+    lastClickedIndex = lastClickedIndex < 0 ? 0 : lastClickedIndex + 1;
+    if (!e.shiftKey) {
+      selectedIndices.clear();
+    }
+    selectedIndices.add(lastClickedIndex);
     renderRequests();
-    copyBtn.disabled = false;
+    updateCopyButton();
     updatePreview();
+    scrollSelectedIntoView();
   }
 
-  if (e.key === 'ArrowUp' && selectedIndex > 0) {
+  if (e.key === 'ArrowUp' && lastClickedIndex > 0) {
     e.preventDefault();
-    selectedIndex--;
+    lastClickedIndex--;
+    if (!e.shiftKey) {
+      selectedIndices.clear();
+    }
+    selectedIndices.add(lastClickedIndex);
     renderRequests();
-    copyBtn.disabled = false;
+    updateCopyButton();
     updatePreview();
+    scrollSelectedIntoView();
   }
   
   // Enter to copy
-  if (e.key === 'Enter' && selectedIndex >= 0) {
+  if (e.key === 'Enter' && selectedIndices.size > 0) {
     e.preventDefault();
     copySelected();
   }
