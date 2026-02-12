@@ -10,23 +10,19 @@ const copyBtn = document.getElementById('copyBtn');
 const clearBtn = document.getElementById('clearBtn');
 const statusEl = document.getElementById('status');
 const graphqlToggle = document.getElementById('graphqlToggle');
+const mainSplit = document.getElementById('mainSplit');
+const previewPanel = document.getElementById('previewPanel');
+const previewSummary = document.getElementById('previewSummary');
+const previewTabs = document.getElementById('previewTabs');
+const previewBody = document.getElementById('previewBody');
+let activePreviewTab = 'payload';
+const typeFilterRow = document.getElementById('typeFilterRow');
+const invertFilter = document.getElementById('invertFilter');
+let activeTypeFilter = 'all';
 
 // Listen for network requests
 chrome.devtools.network.onRequestFinished.addListener(async (request) => {
-  // Only capture XHR/Fetch requests (skip images, css, etc)
-  const type = request._resourceType || request.response.content.mimeType;
-  const isApiCall = 
-    type === 'xhr' || 
-    type === 'fetch' ||
-    request.response.content.mimeType?.includes('json') ||
-    request.response.content.mimeType?.includes('text/plain');
-  
-  if (!isApiCall && !request.request.url.includes('/api/')) {
-    // Also include anything with /api/ in the URL
-    if (!request.response.content.mimeType?.includes('json')) {
-      return;
-    }
-  }
+  const resourceType = (request._resourceType || '').toLowerCase();
 
   try {
     // Get response content
@@ -48,6 +44,7 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
       responseHeaders: request.response.headers,
       responseBody: content.body,
       responseEncoding: content.encoding,
+      resourceType: resourceType,
       time: new Date().toLocaleTimeString(),
       isGraphQL: isGraphQLRequest(request.request)
     };
@@ -65,6 +62,17 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
   }
 });
 
+function matchesTypeFilter(resourceType, filterType) {
+  if (filterType === 'fetch') {
+    return resourceType === 'xhr' || resourceType === 'fetch';
+  }
+  if (filterType === 'other') {
+    const known = ['xhr', 'fetch', 'document', 'stylesheet', 'script', 'font', 'image', 'media', 'manifest', 'websocket', 'wasm'];
+    return !known.includes(resourceType);
+  }
+  return resourceType === filterType;
+}
+
 function renderRequests() {
   const filter = filterInput.value.toLowerCase();
   const graphqlOnly = graphqlToggle.checked;
@@ -78,12 +86,19 @@ function renderRequests() {
     // Invalid regex, use simple includes
   }
 
+  const inverted = invertFilter.checked;
   const filtered = requests.filter(req => {
+    // Filter by resource type
+    if (activeTypeFilter !== 'all') {
+      const matches = matchesTypeFilter(req.resourceType, activeTypeFilter);
+      if (inverted ? matches : !matches) return false;
+    }
+
     // Filter by GraphQL toggle
     if (graphqlOnly && !req.isGraphQL) {
       return false;
     }
-    
+
     // Filter by text search
     if (!filter) return true;
     const searchStr = `${req.method} ${req.url}`;
@@ -132,6 +147,7 @@ function renderRequests() {
       selectedIndex = parseInt(el.dataset.index);
       renderRequests();
       copyBtn.disabled = false;
+      updatePreview();
     });
 
     el.addEventListener('dblclick', () => {
@@ -476,9 +492,252 @@ function showStatus(message, type = '') {
   }, 2000);
 }
 
+// Preview panel logic
+function updatePreview() {
+  if (selectedIndex < 0 || !requests[selectedIndex]) {
+    previewPanel.classList.remove('visible');
+    mainSplit.classList.remove('has-preview');
+    return;
+  }
+
+  const req = requests[selectedIndex];
+  previewPanel.classList.add('visible');
+  mainSplit.classList.add('has-preview');
+
+  // Auto-select best tab for this request
+  const hasPayload = req.postData && (req.postData.text || req.postData.params);
+  if (!hasPayload && activePreviewTab === 'payload') {
+    activePreviewTab = 'response';
+  }
+
+  // Summary line
+  const statusClass = req.status < 300 ? 'success' : req.status < 400 ? 'redirect' : 'error';
+  const methodClass = req.method.toLowerCase();
+  previewSummary.innerHTML = `
+    <span class="method ${methodClass}">${req.method}</span>
+    <span class="url" title="${escapeHtml(req.url)}">${escapeHtml(req.url)}</span>
+    <span class="arrow">&rarr;</span>
+    <span class="status-code ${statusClass}">${req.status} ${req.statusText}</span>
+  `;
+
+  // Update tab badges
+  const tabs = previewTabs.querySelectorAll('.preview-tab');
+  tabs.forEach(tab => {
+    const tabName = tab.dataset.tab;
+    tab.classList.toggle('active', tabName === activePreviewTab);
+
+    if (tabName === 'payload') {
+      const count = hasPayload ? countKeys(req.postData) : 0;
+      tab.innerHTML = `Payload${count ? ` <span class="tab-badge">${count}</span>` : ''}`;
+    } else if (tabName === 'headers') {
+      const keyHeaders = getKeyHeaders(req);
+      tab.innerHTML = `Headers <span class="tab-badge">${keyHeaders.length}</span>`;
+    } else {
+      tab.innerHTML = 'Response';
+    }
+  });
+
+  renderPreviewBody(req);
+}
+
+function renderPreviewBody(req) {
+  switch (activePreviewTab) {
+    case 'payload':
+      renderPayloadTab(req);
+      break;
+    case 'response':
+      renderResponseTab(req);
+      break;
+    case 'headers':
+      renderHeadersTab(req);
+      break;
+  }
+}
+
+function renderPayloadTab(req) {
+  if (!req.postData || (!req.postData.text && !req.postData.params)) {
+    previewBody.innerHTML = '<div class="preview-empty">No payload</div>';
+    return;
+  }
+
+  // For GraphQL, show operation info + variables
+  if (req.isGraphQL) {
+    const gqlInfo = parseGraphQLRequest(req.postData);
+    if (gqlInfo) {
+      let html = '';
+      if (gqlInfo.operationName) {
+        html += `<div class="preview-section-label">Operation</div>`;
+        html += `<div>${escapeHtml(gqlInfo.operationName)} <span style="color:#888">(${gqlInfo.operationType})</span></div>`;
+      }
+      html += `<div class="preview-section-label">Query</div>`;
+      html += syntaxHighlightJson(gqlInfo.query, true);
+      if (gqlInfo.variables && Object.keys(gqlInfo.variables).length > 0) {
+        html += `<div class="preview-section-label">Variables</div>`;
+        html += syntaxHighlightJson(JSON.stringify(gqlInfo.variables, null, 2));
+      }
+      previewBody.innerHTML = html;
+      return;
+    }
+  }
+
+  // Query parameters
+  let html = '';
+  if (req.queryString && req.queryString.length > 0) {
+    html += `<div class="preview-section-label">Query Parameters</div>`;
+    req.queryString.forEach(p => {
+      html += `<div class="kv-row"><span class="kv-key">${escapeHtml(p.name)}</span><span class="kv-val">${escapeHtml(p.value)}</span></div>`;
+    });
+  }
+
+  // Body
+  html += `<div class="preview-section-label">Body</div>`;
+  const payload = parsePayload(req.postData);
+  if (typeof payload === 'object' && payload !== null) {
+    html += syntaxHighlightJson(JSON.stringify(payload, null, 2));
+  } else if (payload) {
+    html += `<div>${escapeHtml(String(payload))}</div>`;
+  }
+
+  previewBody.innerHTML = html;
+}
+
+function renderResponseTab(req) {
+  if (!req.responseBody) {
+    previewBody.innerHTML = '<div class="preview-empty">No response body</div>';
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(req.responseBody);
+    previewBody.innerHTML = syntaxHighlightJson(JSON.stringify(parsed, null, 2));
+  } catch (e) {
+    previewBody.textContent = req.responseBody;
+  }
+}
+
+function renderHeadersTab(req) {
+  const keyHeaders = getKeyHeaders(req);
+
+  if (keyHeaders.length === 0) {
+    previewBody.innerHTML = '<div class="preview-empty">No notable headers</div>';
+    return;
+  }
+
+  let html = '';
+  let currentSection = '';
+  keyHeaders.forEach(h => {
+    if (h.section !== currentSection) {
+      currentSection = h.section;
+      html += `<div class="preview-section-label">${escapeHtml(currentSection)}</div>`;
+    }
+    html += `<div class="kv-row"><span class="kv-key">${escapeHtml(h.name)}</span><span class="kv-val${h.masked ? ' masked' : ''}">${escapeHtml(h.value)}</span></div>`;
+  });
+
+  previewBody.innerHTML = html;
+}
+
+function getKeyHeaders(req) {
+  const important = [
+    'content-type', 'authorization', 'x-api-key', 'x-request-id',
+    'x-correlation-id', 'x-trace-id', 'cache-control', 'accept'
+  ];
+  const sensitivePatterns = ['authorization', 'x-api-key', 'cookie', 'token'];
+  const result = [];
+
+  // Request headers
+  (req.headers || []).forEach(h => {
+    const lower = h.name.toLowerCase();
+    const isCustom = lower.startsWith('x-') && !important.includes(lower);
+    if (important.includes(lower) || isCustom) {
+      const isSensitive = sensitivePatterns.some(p => lower.includes(p));
+      result.push({
+        section: 'Request',
+        name: h.name,
+        value: isSensitive ? maskValue(h.value) : h.value,
+        masked: isSensitive
+      });
+    }
+  });
+
+  // Response headers (just content-type and cache)
+  const respImportant = ['content-type', 'cache-control', 'x-request-id', 'x-correlation-id'];
+  (req.responseHeaders || []).forEach(h => {
+    const lower = h.name.toLowerCase();
+    if (respImportant.includes(lower) || lower.startsWith('x-')) {
+      result.push({
+        section: 'Response',
+        name: h.name,
+        value: h.value,
+        masked: false
+      });
+    }
+  });
+
+  return result;
+}
+
+function maskValue(val) {
+  if (!val || val.length <= 8) return '****';
+  return val.substring(0, 4) + '****' + val.substring(val.length - 4);
+}
+
+function countKeys(postData) {
+  if (!postData) return 0;
+  if (postData.text) {
+    try {
+      const parsed = JSON.parse(postData.text);
+      return typeof parsed === 'object' ? Object.keys(parsed).length : 1;
+    } catch (e) {
+      return 1;
+    }
+  }
+  if (postData.params) return postData.params.length;
+  return 0;
+}
+
+function syntaxHighlightJson(str, raw) {
+  if (raw) {
+    return `<div>${escapeHtml(str)}</div>`;
+  }
+  // Highlight JSON keys, strings, numbers, booleans, null
+  const highlighted = escapeHtml(str)
+    .replace(/"([^"\\]*(\\.[^"\\]*)*)"\s*:/g, '<span class="json-key">"$1"</span>:')
+    .replace(/:\s*"([^"\\]*(\\.[^"\\]*)*)"/g, ': <span class="json-string">"$1"</span>')
+    .replace(/:\s*(\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+    .replace(/:\s*(true|false)/g, ': <span class="json-boolean">$1</span>')
+    .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>');
+  return `<div>${highlighted}</div>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Tab click handling
+previewTabs.addEventListener('click', (e) => {
+  const tab = e.target.closest('.preview-tab');
+  if (!tab) return;
+  activePreviewTab = tab.dataset.tab;
+  previewTabs.querySelectorAll('.preview-tab').forEach(t => t.classList.toggle('active', t === tab));
+  if (selectedIndex >= 0 && requests[selectedIndex]) {
+    renderPreviewBody(requests[selectedIndex]);
+  }
+});
+
 // Event listeners
 filterInput.addEventListener('input', renderRequests);
 graphqlToggle.addEventListener('change', renderRequests);
+invertFilter.addEventListener('change', renderRequests);
+
+typeFilterRow.addEventListener('click', (e) => {
+  const btn = e.target.closest('.type-btn');
+  if (!btn) return;
+  activeTypeFilter = btn.dataset.type;
+  typeFilterRow.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b === btn));
+  renderRequests();
+});
 
 copyBtn.addEventListener('click', copySelected);
 
@@ -487,6 +746,7 @@ clearBtn.addEventListener('click', () => {
   selectedIndex = -1;
   copyBtn.disabled = true;
   renderRequests();
+  updatePreview();
   showStatus('Cleared', 'success');
 });
 
@@ -504,13 +764,15 @@ document.addEventListener('keydown', (e) => {
     selectedIndex++;
     renderRequests();
     copyBtn.disabled = false;
+    updatePreview();
   }
-  
+
   if (e.key === 'ArrowUp' && selectedIndex > 0) {
     e.preventDefault();
     selectedIndex--;
     renderRequests();
     copyBtn.disabled = false;
+    updatePreview();
   }
   
   // Enter to copy
