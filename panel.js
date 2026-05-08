@@ -20,6 +20,7 @@ let activePreviewTab = 'payload';
 const typeFilterRow = document.getElementById('typeFilterRow');
 const invertFilter = document.getElementById('invertFilter');
 let activeTypeFilter = 'all';
+const compactToggle = document.getElementById('compactToggle');
 
 // Listen for network requests
 chrome.devtools.network.onRequestFinished.addListener(async (request) => {
@@ -186,23 +187,40 @@ function renderRequests() {
   });
 }
 
+function compactify(obj) {
+  if (!compactToggle.checked) return obj;
+  return stripNoise(obj);
+}
+
+function stripNoise(val) {
+  if (val === null || val === undefined || typeof val !== 'object') return val;
+  if (Array.isArray(val)) return val.map(stripNoise);
+  const result = {};
+  for (const [k, v] of Object.entries(val)) {
+    if (k === '__typename') continue;
+    if (k === 'query' && typeof v === 'string' && (v.trimStart().startsWith('query ') || v.trimStart().startsWith('mutation ') || v.trimStart().startsWith('subscription ') || v.trimStart().startsWith('{'))) continue;
+    result[k] = stripNoise(v);
+  }
+  return result;
+}
+
 function formatAsJson(req) {
   const payload = req.postData ? parsePayload(req.postData) : null;
   let responseBody = req.responseBody;
-  
+
   try {
     responseBody = JSON.parse(req.responseBody);
   } catch (e) {
     // Keep as string
   }
 
-  return JSON.stringify({
+  return JSON.stringify(compactify({
     endpoint: req.url,
     method: req.method,
     status: req.status,
     payload: payload,
     response: responseBody
-  }, null, 2);
+  }), null, 2);
 }
 
 function formatAsCurl(req) {
@@ -222,36 +240,41 @@ function formatAsCurl(req) {
   
   // Add body
   if (req.postData && req.postData.text) {
-    curl += ` \\\n  --data-raw '${req.postData.text}'`;
+    let body = req.postData.text;
+    if (compactToggle.checked) {
+      try { body = JSON.stringify(compactify(JSON.parse(body))); } catch (e) {}
+    }
+    curl += ` \\\n  --data-raw '${body}'`;
   }
 
   // Add response
   let responseBody = req.responseBody;
   try {
-    responseBody = JSON.stringify(JSON.parse(req.responseBody), null, 2);
+    responseBody = JSON.stringify(compactify(JSON.parse(req.responseBody)), null, 2);
   } catch (e) {}
 
   return `${curl}\n\n# Response (${req.status} ${req.statusText}):\n${responseBody}`;
 }
 
 function formatAsMarkdown(req) {
-  const payload = req.postData ? parsePayload(req.postData) : null;
+  let payload = req.postData ? parsePayload(req.postData) : null;
+  if (payload) payload = compactify(payload);
   let responseBody = req.responseBody;
-  
+
   try {
-    responseBody = JSON.stringify(JSON.parse(req.responseBody), null, 2);
+    responseBody = JSON.stringify(compactify(JSON.parse(req.responseBody)), null, 2);
   } catch (e) {}
 
   let md = `## ${req.method} ${new URL(req.url).pathname}\n\n`;
   md += `**URL:** \`${req.url}\`\n\n`;
   md += `**Status:** ${req.status} ${req.statusText}\n\n`;
-  
+
   if (payload) {
     md += `### Request Payload\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n\n`;
   }
-  
+
   md += `### Response\n\`\`\`json\n${responseBody}\n\`\`\``;
-  
+
   return md;
 }
 
@@ -273,24 +296,26 @@ function formatAsGraphQL(req) {
   // Operation type
   output += `Type: ${gqlInfo.operationType}\n\n`;
   
-  // Query
-  output += `Query:\n${gqlInfo.query}\n\n`;
-  
+  // Query (skip in compact mode)
+  if (!compactToggle.checked) {
+    output += `Query:\n${gqlInfo.query}\n\n`;
+  }
+
   // Variables
   if (gqlInfo.variables) {
-    output += `Variables:\n${JSON.stringify(gqlInfo.variables, null, 2)}\n\n`;
+    output += `Variables:\n${JSON.stringify(compactify(gqlInfo.variables), null, 2)}\n\n`;
   }
-  
+
   // Response
   let responseBody = req.responseBody;
   try {
-    responseBody = JSON.stringify(JSON.parse(req.responseBody), null, 2);
+    responseBody = JSON.stringify(compactify(JSON.parse(req.responseBody)), null, 2);
   } catch (e) {
     // Keep as string if not JSON
   }
-  
+
   output += `Response:\n${responseBody}`;
-  
+
   return output;
 }
 
@@ -500,7 +525,7 @@ async function copySelected() {
       const payload = req.postData ? parsePayload(req.postData) : null;
       let responseBody = req.responseBody;
       try { responseBody = JSON.parse(req.responseBody); } catch (e) {}
-      return { endpoint: req.url, method: req.method, status: req.status, payload, response: responseBody };
+      return compactify({ endpoint: req.url, method: req.method, status: req.status, payload, response: responseBody });
     });
     text = JSON.stringify(items, null, 2);
   } else {
