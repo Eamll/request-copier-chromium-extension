@@ -1,0 +1,10 @@
+# GitHub Pages serves only the privacy policy required by the Chrome Web Store.
+# Everything else in the repo is excluded from the published site.
+exclude:
+  - manifest.json
+  - devtools.html
+  - devtools.js
+  - panel.html
+  - panel.js
+  - icons
+  - README.md
