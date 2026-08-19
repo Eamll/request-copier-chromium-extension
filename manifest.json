@@ -1,6 +1,6 @@
 {
   "name": "Network Request Copier",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Copy network request endpoint, payload, and response with a hotkey",
   "manifest_version": 3,
   "devtools_page": "devtools.html",

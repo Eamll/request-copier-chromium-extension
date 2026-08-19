@@ -60,9 +60,25 @@
     
     .filter-row {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 12px;
       align-items: center;
+    }
+
+    /* Grows to fill the row, but may shrink past its content when space is tight */
+    .filter-row input[type="text"] {
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    /* Controls stay together and drop to their own line as a group */
+    .filter-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      flex: 0 1 auto;
     }
     
     input[type="text"] {
@@ -178,6 +194,15 @@
       display: flex;
       gap: 12px;
       align-items: center;
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    /* Below this width the toolbar has no room for the "Format:" wording */
+    @media (max-width: 560px) {
+      .format-options .format-label {
+        display: none;
+      }
     }
     
     label {
@@ -195,8 +220,9 @@
       border-radius: 4px;
     }
     
-    .graphql-toggle {
-      display: flex;
+    /* The whole pill is one <label>, so a click anywhere in it toggles once */
+    .toggle-pill {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
       padding: 4px 8px;
@@ -205,10 +231,22 @@
       border-radius: 4px;
       cursor: pointer;
       user-select: none;
+      white-space: nowrap;
+      flex: 0 0 auto;
     }
-    
-    .graphql-toggle:hover {
+
+    .toggle-pill:hover {
       background: #4c4c4c;
+    }
+
+    .toggle-pill:focus-within {
+      border-color: #007acc;
+    }
+
+    /* Checked state reads at a glance without relying on the switch alone */
+    .toggle-pill:has(input:checked) {
+      background: #094771;
+      border-color: #007acc;
     }
     
     .switch {
@@ -503,30 +541,32 @@
   
   <div class="filter-row">
     <input type="text" id="filter" placeholder="Filter requests (regex supported)...">
-    <div class="graphql-toggle" onclick="document.getElementById('graphqlToggle').click()">
-      <label class="switch">
-        <input type="checkbox" id="graphqlToggle">
-        <span class="slider"></span>
+    <div class="filter-controls">
+      <label class="toggle-pill" title="Show only GraphQL requests">
+        <span class="switch">
+          <input type="checkbox" id="graphqlToggle">
+          <span class="slider"></span>
+        </span>
+        <span class="switch-label">GraphQL</span>
       </label>
-      <label for="graphqlToggle" class="switch-label">GraphQL Only</label>
-    </div>
-    <div class="format-options">
-      <label>
-        Format:
-        <select id="format">
-          <option value="json">JSON</option>
-          <option value="curl">cURL + Response</option>
-          <option value="markdown">Markdown</option>
-          <option value="graphql">GraphQL</option>
-        </select>
+      <div class="format-options">
+        <label>
+          <span class="format-label">Format:</span>
+          <select id="format">
+            <option value="json">JSON</option>
+            <option value="curl">cURL + Response</option>
+            <option value="markdown">Markdown</option>
+            <option value="graphql">GraphQL</option>
+          </select>
+        </label>
+      </div>
+      <label class="toggle-pill" title="Strip __typename and raw query text from copied output">
+        <span class="switch">
+          <input type="checkbox" id="compactToggle" checked>
+          <span class="slider"></span>
+        </span>
+        <span class="switch-label">Compact</span>
       </label>
-    </div>
-    <div class="graphql-toggle" onclick="document.getElementById('compactToggle').click()">
-      <label class="switch">
-        <input type="checkbox" id="compactToggle" checked>
-        <span class="slider"></span>
-      </label>
-      <label for="compactToggle" class="switch-label">Compact</label>
     </div>
   </div>
   
