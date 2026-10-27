@@ -34,6 +34,17 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
       });
     });
 
+    const graphqlOperations = getGraphQLOperations(request.request);
+    const graphqlLabel = graphqlOperations.map(operation => {
+      if (!operation.operationName) {
+        const url = new URL(request.request.url);
+        return url.pathname + url.search;
+      }
+      return operation.query
+        ? `${operation.operationName} (${operation.operationType})`
+        : operation.operationName;
+    }).join(', ');
+
     const requestData = {
       id: Date.now() + Math.random(),
       method: request.request.method,
@@ -48,7 +59,8 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
       responseEncoding: content.encoding,
       resourceType: resourceType,
       time: new Date().toLocaleTimeString(),
-      isGraphQL: isGraphQLRequest(request.request)
+      isGraphQL: graphqlOperations.length > 0,
+      graphqlLabel
     };
 
     requests.unshift(requestData);
@@ -104,7 +116,10 @@ function renderRequests() {
     // Filter by text search
     if (!filter) return true;
     const searchStr = `${req.method} ${req.url}`;
-    return regex ? regex.test(searchStr) : searchStr.toLowerCase().includes(filter);
+    const operationSearchStr = req.graphqlLabel ? `${searchStr} ${req.graphqlLabel}` : searchStr;
+    return regex
+      ? regex.test(searchStr) || regex.test(operationSearchStr)
+      : operationSearchStr.toLowerCase().includes(filter);
   });
 
   if (filtered.length === 0) {
@@ -127,17 +142,15 @@ function renderRequests() {
     let graphqlBadge = '';
     
     if (req.isGraphQL) {
-      const gqlInfo = parseGraphQLRequest(req.postData);
-      if (gqlInfo && gqlInfo.operationName) {
-        displayText = `${gqlInfo.operationName} (${gqlInfo.operationType})`;
-      }
+      displayText = req.graphqlLabel || displayText;
       graphqlBadge = '<span class="graphql-badge">GQL</span>';
     }
     
+    const title = req.graphqlLabel ? `${displayText}\n${req.url}` : req.url;
     return `
       <div class="request-item ${isSelected ? 'selected' : ''}" data-index="${requests.indexOf(req)}">
         <span class="method ${req.method.toLowerCase()}">${req.method}${graphqlBadge}</span>
-        <span class="url" title="${req.url}">${displayText}</span>
+        <span class="url" title="${escapeHtml(title).replace(/"/g, '&quot;')}">${escapeHtml(displayText)}</span>
         <span class="status-code ${statusClass}">${req.status}</span>
       </div>
     `;
@@ -319,44 +332,46 @@ function formatAsGraphQL(req) {
   return output;
 }
 
-function isGraphQLRequest(request) {
-  // Check URL for common GraphQL endpoints
-  const url = request.url.toLowerCase();
-  const isGraphQLEndpoint = 
-    url.includes('/graphql') || 
-    url.includes('/api/graphql') ||
-    url.includes('/gql') ||
-    url.includes('/query');
-  
-  // Check if it's a POST request with JSON body
-  if (request.method === 'POST' && request.postData) {
-    const body = request.postData.text || '';
-    
-    // Check Content-Type header
-    const contentType = request.headers?.find(h => 
+function getGraphQLOperations(request) {
+  const url = new URL(request.url);
+  const isGraphQLEndpoint = /\/(graphql|gql|query)/i.test(url.pathname);
+  let payload;
+
+  if (request.method === 'GET') {
+    payload = Object.fromEntries(url.searchParams);
+  } else if (request.method === 'POST' && request.postData?.text) {
+    const contentType = request.headers?.find(h =>
       h.name.toLowerCase() === 'content-type'
     )?.value?.toLowerCase() || '';
-    
-    if (contentType.includes('application/json') || isGraphQLEndpoint) {
-      try {
-        const parsed = JSON.parse(body);
-        
-        // GraphQL requests typically have 'query' or 'mutation' field
-        if (parsed.query || parsed.mutation || parsed.subscription) {
-          return true;
-        }
-      } catch (e) {
-        // Not JSON, check if it's a raw GraphQL query
-        if (body.trim().startsWith('query ') || 
-            body.trim().startsWith('mutation ') ||
-            body.trim().startsWith('subscription ')) {
-          return true;
-        }
+    if (!isGraphQLEndpoint && !contentType.includes('application/json') &&
+        !contentType.includes('application/graphql')) return [];
+
+    try {
+      payload = JSON.parse(request.postData.text);
+    } catch (e) {
+      if (!/^(?:\s|#[^\r\n]*(?:\r?\n|$))*(?:query\b|mutation\b|subscription\b|fragment\b|\{)/.test(request.postData.text)) {
+        return [];
       }
+      payload = { query: request.postData.text };
     }
+  } else {
+    return [];
   }
-  
-  return false;
+
+  const operations = Array.isArray(payload) ? payload : [payload];
+  return operations.flatMap(operation => {
+    if (!operation || typeof operation !== 'object') return [];
+    const query = operation.query || operation.mutation || operation.subscription;
+    const hasQuery = typeof query === 'string' && query.trim().length > 0;
+    const hasName = typeof operation.operationName === 'string' &&
+      /^[_A-Za-z][_0-9A-Za-z]*$/.test(operation.operationName);
+    // Persisted queries may send only a name and hash, without query text.
+    if (!hasQuery && !(hasName && (isGraphQLEndpoint || operation.extensions?.persistedQuery))) {
+      return [];
+    }
+    const info = parseGraphQLRequest({ text: JSON.stringify(operation) });
+    return info ? [info] : [];
+  });
 }
 
 function parseGraphQLRequest(postData) {

@@ -441,6 +441,7 @@
       color: #888;
       cursor: pointer;
       border-bottom: 2px solid transparent;
+      border-radius: 0;
       background: none;
       border-top: none;
       border-left: none;
@@ -540,7 +541,7 @@
   </div>
   
   <div class="filter-row">
-    <input type="text" id="filter" placeholder="Filter requests (regex supported)...">
+    <input type="text" id="filter" placeholder="Filter URL or GraphQL operation (regex)..." title="Filter by method, URL, or GraphQL operation name. Regular expressions are supported.">
     <div class="filter-controls">
       <label class="toggle-pill" title="Show only GraphQL requests">
         <span class="switch">
