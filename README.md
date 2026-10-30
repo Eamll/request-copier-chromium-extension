@@ -21,9 +21,11 @@ A Chrome DevTools extension that lets you copy network request details (endpoint
 
 The request list shows names such as `GetUser (query)` or `SaveUser (mutation)` instead of just `/graphql`. Names come from `operationName` or the query text, for JSON POST bodies, raw GraphQL bodies, and GET query parameters. Batched requests show the available names separated by commas.
 
-Persisted queries that send `operationName` without query text show the name without guessing the operation type. Anonymous operations keep the endpoint. Hover over a row to see its full label and URL.
+Persisted queries that send `operationName` without query text show the name without guessing the operation type. Anonymous operations use the first root field as a list label, for example `query ($status: BookStatus!, $library_ids: [ID!]) { books(status: $status, library_ids: $library_ids) { book_id } }` shows `books (query)`, and `{ authors { name } }` shows `authors (query)`. Aliases use the underlying field name. This display label is searchable but does not add an operation name to the query or copied output. If no root field can be identified, the endpoint is kept. Hover over a row to see its full label and URL.
 
 Use the **GraphQL** toggle to show only GraphQL requests. The text filter searches operation names as well as methods and URLs, with regex support.
+
+The **Payload** preview highlights GraphQL keywords, names, variables, directives, strings, numbers, booleans, null, and comments. Query whitespace and copied output stay unchanged. Variables and responses keep their JSON highlighting.
 
 ### Keyboard Shortcuts
 
