@@ -70,7 +70,24 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
       requests.pop();
     }
 
+    // New rows shift every existing selection and range anchor down one position.
+    const shiftedSelection = [...selectedIndices]
+      .map(index => index + 1)
+      .filter(index => index < requests.length);
+    const selectionEvicted = shiftedSelection.length !== selectedIndices.size;
+    selectedIndices.clear();
+    shiftedSelection.forEach(index => selectedIndices.add(index));
+    if (lastClickedIndex >= 0) {
+      lastClickedIndex++;
+      if (lastClickedIndex >= requests.length) {
+        lastClickedIndex = Math.max(-1, ...selectedIndices);
+      }
+    }
+
     renderRequests();
+    updateCopyButton();
+    // Leave the current preview untouched unless its selection was evicted.
+    if (selectionEvicted) updatePreview();
   } catch (err) {
     console.error('Error capturing request:', err);
   }
