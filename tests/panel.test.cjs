@@ -124,13 +124,25 @@ test('operation names are searchable with text, regex and invalid-regex fallback
   assert.match(panel.html(), /No requests match the filter/);
 });
 
-test('anonymous operations retain the endpoint without inventing a name', async () => {
-  const panel = createPanel();
-  await panel.capture({ body: { query: '{ user { id } }' } });
-  panel.graphqlOnly();
-  assert.match(panel.html(), /graphql-badge/);
-  assert.ok(panel.html().includes('>/graphql</span>'));
-});
+for (const [style, query, field] of [
+  ['variables', 'query ($status: BookStatus!, $library_ids: [ID!]) {\n  books(status: $status, library_ids: $library_ids) {\n    book_id\n    title\n    author\n    name\n    __typename\n  }\n}', 'books'],
+  ['shorthand', '{ authors { name author_id __typename } }', 'authors'],
+  ['default input objects', 'query ($filter: Filter = { status: "{active}" }) { books { id } }', 'books'],
+  ['root aliases and comments', 'query { # root field\n  items: books { id } }', 'books']
+]) {
+  test(`anonymous ${style} uses the first root field as a list label only`, async () => {
+    const panel = createPanel();
+    await panel.capture({ body: { query } });
+    panel.graphqlOnly();
+    assert.match(panel.html(), /graphql-badge/);
+    assert.ok(panel.html().includes(`>${field} (query)</span>`), panel.html());
+    panel.filter(field);
+    assert.match(panel.html(), /data-index="0"/);
+    assert.equal(JSON.parse(await panel.copy('json')).payload.query, query);
+    assert.doesNotMatch(await panel.copy('graphql'), /Operation:/);
+    assert.deepEqual(panel.errors, []);
+  });
+}
 
 test('ordinary requests, malformed bodies and URL searches still work', async () => {
   const panel = createPanel();
@@ -156,4 +168,32 @@ test('existing copy formats keep their output', async () => {
     markdown: '## POST /graphql\n\n**URL:** `https://example.com/graphql`\n\n**Status:** 200 OK\n\n### Request Payload\n```json\n{\n  "query": "query GetUser { user { id } }"\n}\n```\n\n### Response\n```json\n{\n  "data": {\n    "id": 1\n  }\n}\n```',
     graphql: 'Operation: GetUser\nType: query\n\nQuery:\nquery GetUser { user { id } }\n\nResponse:\n{\n  "data": {\n    "id": 1\n  }\n}'
   });
+});
+
+
+test('GraphQL payload highlights tokens without changing query text, variables or copy', async () => {
+  const panel = createPanel();
+  const query = 'query GetUser($id: ID!, $ratio: Float = -1.5e2) {\n  # query <comment>\n  user(id: $id, active: true, missing: null, role: ADMIN) @skip(if: false) {\n    alias: name(text: "<img src=x onerror=alert(1)> & query", block: """line\nquery""")\n    ...Fields\n  }\n}\nfragment Fields on User { id }';
+  const body = { query, variables: { id: '123' } };
+  await panel.capture({ body });
+  const copied = await panel.copy('json');
+  const html = panel.control('previewBody').innerHTML;
+  for (const [type, token] of [
+    ['keyword', 'query'], ['variable', '$id'], ['number', '-1.5e2'],
+    ['comment', '# query &lt;comment&gt;'], ['boolean', 'true'],
+    ['null', 'null'], ['directive', '@skip'], ['name', 'GetUser'],
+    ['string', '"&lt;img src=x onerror=alert(1)&gt; &amp; query"'],
+    ['string', '"""line\n    query"""']
+  ]) assert.ok(html.includes(`<span class="gql-${type}">${token}</span>`), html);
+  const queryHtml = html.split('<div class="preview-section-label">Query</div>')[1]
+    .split('<div class="preview-section-label">Variables</div>')[0];
+  const plain = queryHtml.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  // The existing preview formatter indents the continuation of block strings.
+  assert.equal(plain, query.replace('line\nquery', 'line\n    query'));
+  assert.ok(!html.includes('<img'));
+  assert.match(html, /<span class="json-key">"id"<\/span>/);
+  assert.match(html, /<span class="json-string">"123"<\/span>/);
+  assert.deepEqual(JSON.parse(copied).payload, body);
+  assert.deepEqual(panel.errors, []);
 });

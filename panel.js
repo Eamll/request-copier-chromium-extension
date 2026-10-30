@@ -36,13 +36,14 @@ chrome.devtools.network.onRequestFinished.addListener(async (request) => {
 
     const graphqlOperations = getGraphQLOperations(request.request);
     const graphqlLabel = graphqlOperations.map(operation => {
-      if (!operation.operationName) {
+      const label = operation.operationName || getAnonymousGraphQLField(operation.query);
+      if (!label) {
         const url = new URL(request.request.url);
         return url.pathname + url.search;
       }
       return operation.query
-        ? `${operation.operationName} (${operation.operationType})`
-        : operation.operationName;
+        ? `${label} (${operation.operationType})`
+        : label;
     }).join(', ');
 
     const requestData = {
@@ -330,6 +331,26 @@ function formatAsGraphQL(req) {
   output += `Response:\n${responseBody}`;
 
   return output;
+}
+
+// A display fallback only: do not invent an operationName in preview or exports.
+function getAnonymousGraphQLField(query) {
+  const tokens = (query || '').match(/"""(?:\\[\s\S]|(?!""")[^\\])*"""|"(?:\\[^\r\n]|[^"\\\r\n])*"|#[^\r\n]*|[_A-Za-z][_0-9A-Za-z]*|[^\s,\uFEFF]/g) || [];
+  const significant = tokens.filter(token => !token.startsWith('#'));
+  // Fragment definitions alone do not identify an executed root field.
+  if (significant[0] === 'fragment') return null;
+  let parentheses = 0;
+  for (let i = 0; i < significant.length; i++) {
+    const token = significant[i];
+    if (token === '(') parentheses++;
+    else if (token === ')') parentheses--;
+    // Ignore braces in variable defaults and directive arguments.
+    else if (token === '{' && parentheses === 0) {
+      const field = significant[i + 2] === ':' ? significant[i + 3] : significant[i + 1];
+      return /^[_A-Za-z][_0-9A-Za-z]*$/.test(field || '') ? field : null;
+    }
+  }
+  return null;
 }
 
 function getGraphQLOperations(request) {
@@ -657,7 +678,7 @@ function renderPayloadTab(req) {
         html += `<div>${escapeHtml(gqlInfo.operationName)} <span style="color:#888">(${gqlInfo.operationType})</span></div>`;
       }
       html += `<div class="preview-section-label">Query</div>`;
-      html += syntaxHighlightJson(gqlInfo.query, true);
+      html += syntaxHighlightGraphQL(gqlInfo.query);
       if (gqlInfo.variables && Object.keys(gqlInfo.variables).length > 0) {
         html += `<div class="preview-section-label">Variables</div>`;
         html += syntaxHighlightJson(JSON.stringify(gqlInfo.variables, null, 2));
@@ -780,6 +801,28 @@ function countKeys(postData) {
   }
   if (postData.params) return postData.params.length;
   return 0;
+}
+
+function syntaxHighlightGraphQL(query) {
+  // Tokenize the original text once, then escape each token before adding markup.
+  // Strings and comments consume their contents so embedded keywords stay literal.
+  const tokens = /"""(?:\\[\s\S]|(?!""")[^\\])*"""|"(?:\\[^\r\n]|[^"\\\r\n])*"|#[^\r\n]*|\$[_A-Za-z][_0-9A-Za-z]*|@[_A-Za-z][_0-9A-Za-z]*|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|[_A-Za-z][_0-9A-Za-z]*|[^]/g;
+  const keywords = new Set(['query', 'mutation', 'subscription', 'fragment', 'on']);
+  const highlighted = query.replace(tokens, token => {
+    let type;
+    if (token.startsWith('"')) type = 'string';
+    else if (token.startsWith('#')) type = 'comment';
+    else if (token.startsWith('$')) type = 'variable';
+    else if (token.startsWith('@')) type = 'directive';
+    else if (/^-?\d/.test(token)) type = 'number';
+    else if (token === 'true' || token === 'false') type = 'boolean';
+    else if (token === 'null') type = 'null';
+    else if (keywords.has(token)) type = 'keyword';
+    else if (/^[_A-Za-z]/.test(token)) type = 'name';
+    const escaped = escapeHtml(token);
+    return type ? `<span class="gql-${type}">${escaped}</span>` : escaped;
+  });
+  return `<div>${highlighted}</div>`;
 }
 
 function syntaxHighlightJson(str, raw) {
